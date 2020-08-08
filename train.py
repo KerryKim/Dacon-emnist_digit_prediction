@@ -78,7 +78,16 @@ if mode == 'train':
 
     transform = transforms.Compose([Normalization(mean=0.5, std=0.5), ToTensor()])
 
-    dataset_train, dataset_val = Dataset(data_dir=os.path.join(data_dir, 'train.csv'), transform=transform)
+    dataset = Dataset(data_dir=os.path.join(data_dir, 'train.csv'), transform=transform)
+    label, input = dataset['label'], dataset['input']
+
+    # train/valid dataset으로 나누어 준다.
+    # train_test_split의 output 순서 : train_input, valid_input, train_label,valid_label
+    train_input, val_input, train_label, val_label = train_test_split(input, label, test_size=0.05,
+                                                                      random_state=7)
+    dataset_train = {'label': train_label, 'input': train_input}
+    dataset_val = {'label': val_label, 'input': val_input}
+
     loader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=8)
     loader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=8)
 

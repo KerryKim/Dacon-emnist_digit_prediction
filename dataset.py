@@ -44,18 +44,10 @@ class Dataset(torch.utils.data.Dataset):
 
         # 참고> input.shape : (2048, 28, 28 ,1) / label.shape : (2048, )
 
-        # train/valid dataset으로 나누어 준다.
-        # train_test_split의 output 순서 : train_input, valid_input, train_label,valid_label
-        train_input, val_input, train_label, val_label = train_test_split(input, label, test_size=0.05,
-                                                                          random_state=7)
-        dataset_train = {'label': train_label, 'input': train_input}
-        dataset_val = {'label': val_label, 'input': val_input}
-
         if self.transform:
-            dataset_train = self.transform(dataset_train)
-            dataset_val = self.transform(dataset_val)
+            data = self.transform(data)
 
-        return dataset_train, dataset_val
+        return data
 
 
 ## define transform
@@ -94,11 +86,11 @@ class RandomFlip(object):
     def __call__(self, data):
         label, input = data['label'], data['input']
 
-        if np.random.rand() > 0.5
+        if np.random.rand() > 0.5:
             label = np.fliplr(label)
             input = np.fliplr(input)
 
-        if np.random.rand() > 0.5
+        if np.random.rand() > 0.5:
             label = np.fliqud(label)
             input = np.fliqud(input)
 
