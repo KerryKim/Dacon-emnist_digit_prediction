@@ -44,6 +44,8 @@ class Dataset(torch.utils.data.Dataset):
 
         # 참고> input.shape : (2048, 28, 28 ,1) / label.shape : (2048, )
 
+        data = {'input': input, 'label': label}
+
         if self.transform:
             data = self.transform(data)
 
