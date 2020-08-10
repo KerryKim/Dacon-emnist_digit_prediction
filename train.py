@@ -110,6 +110,17 @@ if mode == 'train':
     num_batch_train = np.ceil(num_data_train / batch_size)  # np.ceil은 올림 함수이다. Ex> 4.2 → 5 로 변환
     num_batch_val = np.ceil(num_data_val / batch_size)
 
+else:
+    transform = transforms.Compose([Normalization(mean=0.5, std=0.5), ToTensor()])
+
+    load_data = pd.read_csv(os.path.join(data_dir, 'test.csv'))
+    dataset_test = Dataset(load_data, mode, transform=transform)
+    loader_test = DataLoader(dataset_test, batch_size=batch_size, shuffle=False, num_workers=8)
+
+    # 그밖에 부수적인 variables 설정하기
+    num_data_test = len(dataset_test)
+
+    num_batch_test = np.ceil(num_data_test / batch_size)
 ## 네트워크 생성하기
 net = Net().to(device)
 
@@ -122,10 +133,15 @@ optim = torch.optim.Adam(net.parameters(), lr=lr)
 ## 그밖에 부수적인 functions 설정하기
 # 텐서를 넘파이로 바꾸어 줄 때는 CPU로 옮겨야 한다.
 fn_tonumpy = lambda x: x.to('cpu').detach().numpy()
-fn_lsttonumpy = lambda x: x.detach().cpu().numpy()
-
 fn_denorm = lambda x, mean, std: (x * std) + mean
 fn_class = lambda x: 1.0 * (x > 0.5)
+
+
+def flatten(lst):
+    result = []
+    for item in lst:
+        result.extend(item)
+    return result
 
 ## 네트워크 학습시키기
 st_epoch = 0
