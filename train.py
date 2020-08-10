@@ -228,7 +228,7 @@ if mode == 'train':
                 print("VALID: EPOCH %04d / %04d | BATCH %04d / %04d | LOSS %.4f | ACC %.4f" %
                       (epoch, num_epoch, batch, num_batch_val, np.mean(loss_arr), acc))
 
-        if epoch % 50 == 0:
+        if epoch % 40 == 0:
             save(ckpt_dir=ckpt_dir, net=net, optim=optim, epoch=epoch)
 
 # TEST MODE
@@ -245,19 +245,27 @@ else:
             input = data['input'].to(device)
 
             output = net(input)
-            pred.append(output)
+
+            # 배치사이즈에 해당하는 output digit를 만든다.
+            np_output = fn_tonumpy(output)
+            lst_output = []
+            for i in range(batch_size):
+                nb_output = np.argmax(np_output[i, :])
+                lst_output.append(nb_output)
+
+            # submission에 제출할 전체 test data digit를 만든다.
+            pred.append(lst_output)
 
             print("TEST: BATCH %04d / %04d" %
                   (batch, num_batch_test))
 
         # submission
+        pred = flatten(pred)
         submission = pd.read_csv('./datasets/submission.csv')
-        submission['digit'] = torch.cat(pred).detach().cpu().numpy()
+        submission['digit'] = fn_tonumpy(torch.LongTensor(pred))
         submission.to_csv('submission_v1.csv', index=False)
 
     print("AVERAGE TEST: BATCH %04d / %04d" %
           (batch, num_batch_test))
 
-
-##
 
