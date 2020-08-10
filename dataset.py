@@ -1,48 +1,59 @@
 ## import libraries
-
-import os
 import numpy as np
-import pandas as pd
-
 import torch
-import torch.nn as nn
-
-from sklearn.model_selection import train_test_split
 
 ## define dataset
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, data_dir, transform=None):
-        self.data_dir = data_dir
+    # dataset preprocessing
+    def __init__(self, data, mode, transform=None):
+        self.data = data
         self.transform = transform
+        self.mode = mode
 
+        # train에는 input/label이 있지만 test에는 input만 있으므로 구분해 준다.
+        if mode == 'train':
+            # __getitem__()에 넣기 위해 list label/input 생성
+            label = self.data['digit']
+            lst_label = list(label.values)
+
+            df_input = self.data.iloc[:, 3:]
+        else:
+            lst_label = []
+            df_input = self.data.iloc[:, 2:]
+
+        lst_input = []
+        for i in range(len(df_input)):
+            temp = df_input.iloc[i, :].values.reshape(28, 28)
+            lst_input.append(temp)
+
+        self.lst_label = lst_label
+        self.lst_input = lst_input
+
+    # dataset length
     def __len__(self):
-        return len(self.lst_label)
+        return len(self.data)
 
+    # dataset에서 특정 1개의 샘플을 가져옴
     def __getitem__(self, index):
-        data = pd.read_csv(self.data_dir)
-
-        del data['id']
-        del data['letter']
-
-        label = data['digit']
-        input = []
-
-        for i in range(2048):
-            temp = data.iloc[i, 1:].values.reshape(28, 28)
-            input.append(temp)
+        mode = self.mode
+        if mode == 'train':
+            # 인덱스를 통해 그에 맵핑되는 입출력 데이터를 리턴 (즉, 1개 sample을 가져옴)
+            label = self.lst_label[index]
+            input = self.lst_input[index]
+        else:
+            label = self.lst_label
+            input = self.lst_input[index]
 
         # list 자료형으로는 img를 나타낼 수 없으므로 numpy 자료형으로 바꾸어 준다.
-        # 데이터 타입 에러 발생으로 np.float32를 추가해준다. (하기 정규화시 필요)
-        label = (np.array(label)).astype(np.float32)
+        # 데이터 타입 에러 발생, 정규화를 위해 np.float32를 추가해준다.
+        # label은 Net output과 연산을 위해 float형으로 바꾸지 않는다. (바꿀시 데이터형 에러 발생)
+        label = np.array(label)
         input = (np.array(input)).astype(np.float32)
 
         input = input / 255.0
 
-        # pytorch에 들어가는 dimension은 input이 3개의 축을 가져야 한다.
-        if input.ndim == 3:
-            input = input[:, :, :, np.newaxis]
-
-        # 참고> input.shape : (2048, 28, 28 ,1) / label.shape : (2048, )
+        if input.ndim == 2:
+            input = input[:, :, np.newaxis]
 
         data = {'input': input, 'label': label}
 
@@ -61,10 +72,10 @@ class ToTensor(object):
     def __call__(self, data):
         label, input = data['label'], data['input']
 
-        # (2048, 28, 28, 1) → (2048, 1, 28, 28)
-        # (샘플수, 가로, 세로, 채널) → (2048, 채널, 가로, 세로)
+        # (28, 28, 1) → (1, 28, 28)
+        # (가로, 세로, 채널) → (채널, 가로, 세로)
         # 값을 확인해봐도 자리가 바뀌는 게 아니라 순서가 바뀌어 있다.
-        input = np.moveaxis(input[:, :, :, :], -1, 1)
+        input = np.moveaxis(input[:, :, :], -1, 0)
 
         data = {'label': torch.from_numpy(label), 'input': torch.from_numpy(input)}
 

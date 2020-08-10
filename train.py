@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms, datasets
 
 # sci-kit learn
@@ -19,7 +18,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.model_selection import KFold
 
 # self-class
-from model import UNet
+from model import Net
 from dataset import *
 from util import *
 
@@ -29,11 +28,11 @@ random.seed(7)
 random_state=7
 
 ## Parser 생성하기
-parser = argparse.ArgumentParser(description="Train the UNet",
+parser = argparse.ArgumentParser(description="Train the Net",
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
 parser.add_argument("--lr", default=1e-3, type=float, dest="lr")
-parser.add_argument("--batch_size", default=4, type=int, dest="batch_size")
+parser.add_argument("--batch_size", default=8, type=int, dest="batch_size")
 parser.add_argument("--num_epoch", default=100, type=int, dest="num_epoch")
 
 parser.add_argument("--data_dir", default="./datasets", type=str, dest="data_dir")
@@ -41,15 +40,22 @@ parser.add_argument("--ckpt_dir", default="./checkpoint", type=str, dest="ckpt_d
 parser.add_argument("--log_dir", default="./log", type=str, dest="log_dir")
 parser.add_argument("--result_dir", default="./result", type=str, dest="result_dir")
 
-parser.add_argument("--traing_mode", default="train", type=str, dest="mode")
+parser.add_argument("--train/test_mode", default="train", type=str, dest="mode")
 parser.add_argument("--train_continue", default="off", type=str, dest="train_continue")
 
-args = parser.parse_args()
+args, unknown = parser.parse_known_args()
 
 ## 트레이닝 파라메터 설정하기
 lr = args.lr
 batch_size = args.batch_size
 num_epoch = args.num_epoch
+
+'''
+data_dir = './datasets'
+ckpt_dir = './checkpoint'
+log_dir = './log'
+result_dir = './result'
+'''
 
 data_dir = args.data_dir
 ckpt_dir = args.ckpt_dir
@@ -68,7 +74,7 @@ print("data dir: %s" % data_dir)
 print("ckpt dir: %s" % ckpt_dir)
 print("log dir: %s" % log_dir)
 print("result dir: %s" % result_dir)
-print("mode: %s" % mode)
+print("train/test_mode: %s" % mode)
 
 
 ## 네트워크 학습하기
@@ -78,41 +84,50 @@ if mode == 'train':
 
     transform = transforms.Compose([Normalization(mean=0.5, std=0.5), ToTensor()])
 
+    '''
     dataset = Dataset(data_dir=os.path.join(data_dir, 'train.csv'), transform=transform)
-    label, input = dataset['label'], dataset['input']
+    label, input = dataset['label'], dataset['input'] 
+    
+    이렇게 사용이 불가하다. 왜냐하면 Dataset class를 사용하면 데이터형도 dataset이 되기 때문에 dict을 사용할 수 없다.
+    '''
 
     # train/valid dataset으로 나누어 준다.
-    # train_test_split의 output 순서 : train_input, valid_input, train_label,valid_label
-    train_input, val_input, train_label, val_label = train_test_split(input, label, test_size=0.05,
-                                                                      random_state=7)
-    dataset_train = {'label': train_label, 'input': train_input}
-    dataset_val = {'label': val_label, 'input': val_input}
+    # train_test_split의 output 순서
+    # 4분류 : train_input, valid_input, train_label,valid_label
+    # 2분류 : train, valid
+    load_data = pd.read_csv(os.path.join(data_dir, 'train.csv'))
+    train, val = train_test_split(load_data, test_size=0.125, random_state=random_state)
 
+    dataset_train = Dataset(train, mode, transform=transform)
     loader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=8)
+
+    dataset_val = Dataset(val, mode, transform=transform)
     loader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=8)
 
     # 그밖에 부수적인 variables 설정하기
-    num_data_train = 1945
-    num_data_val = 103
+    num_data_train = len(dataset_train)
+    num_data_val = len(dataset_val)
 
     num_batch_train = np.ceil(num_data_train / batch_size)  # np.ceil은 올림 함수이다. Ex> 4.2 → 5 로 변환
     num_batch_val = np.ceil(num_data_val / batch_size)
+
 else:
     transform = transforms.Compose([Normalization(mean=0.5, std=0.5), ToTensor()])
 
-    dataset_test = Dataset(data_dir=os.path.join(data_dir, 'test.csv'), transform=transform)
+    load_data = pd.read_csv(os.path.join(data_dir, 'test.csv'))
+    dataset_test = Dataset(load_data, mode, transform=transform)
     loader_test = DataLoader(dataset_test, batch_size=batch_size, shuffle=False, num_workers=8)
 
     # 그밖에 부수적인 variables 설정하기
-    num_data_test = 20480
+    num_data_test = len(dataset_test)
 
     num_batch_test = np.ceil(num_data_test / batch_size)
 
 ## 네트워크 생성하기
-net = UNet().to(device)
+net = Net().to(device)
 
 ## 손실함수 정의하기
-fn_loss = nn.CrossEntropyLoss.to(device)
+fn_loss = nn.CrossEntropyLoss().to(device)
 
 ## Optimizer 설정하기
 optim = torch.optim.Adam(net.parameters(), lr=lr)
@@ -188,29 +203,23 @@ else:
     with torch.no_grad():
         net.eval()
         loss_arr = []
-        prediction = []
+        pred = []
 
         for batch, data in enumerate(loader_test, 1):
             # forward pass
-            label = data['label'].to(device)
             input = data['input'].to(device)
 
             output = net(input)
-            prediction.append(output)
+            pred.append(output)
 
-            # 손실함수 계산하기
-            loss = fn_loss(output, label)
-
-            loss_arr += [loss.item()]
-
-            print("TEST: BATCH %04d / %04d | LOSS %.4f" %
-                  (batch, num_batch_test, np.mean(loss_arr)))
+            print("TEST: BATCH %04d / %04d" %
+                  (batch, num_batch_test))
 
         # submission
         submission = pd.read_csv('./datasets/submission.csv')
-        submission.digit = prediction
+        submission['digit'] = torch.cat(pred).detach().cpu().numpy()
         submission.to_csv('submission_v1.csv', index=False)
 
-    print("AVERAGE TEST: BATCH %04d / %04d | LOSS %.4f" %
-          (batch, num_batch_test, np.mean(loss_arr)))
+    print("AVERAGE TEST: BATCH %04d / %04d" %
+          (batch, num_batch_test))
 
