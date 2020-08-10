@@ -76,7 +76,6 @@ print("log dir: %s" % log_dir)
 print("result dir: %s" % result_dir)
 print("train/test_mode: %s" % mode)
 
-
 ## 네트워크 학습하기
 if mode == 'train':
     # 어떤 결과가 나올지 모르므로 RandomFlip()은 일단 뺀다.
@@ -87,7 +86,7 @@ if mode == 'train':
     '''
     dataset = Dataset(data_dir=os.path.join(data_dir, 'train.csv'), transform=transform)
     label, input = dataset['label'], dataset['input'] 
-    
+
     이렇게 사용이 불가하다. 왜냐하면 Dataset class를 사용하면 데이터형도 dataset이 되기 때문에 dict을 사용할 수 없다.
     '''
 
@@ -111,18 +110,6 @@ if mode == 'train':
     num_batch_train = np.ceil(num_data_train / batch_size)  # np.ceil은 올림 함수이다. Ex> 4.2 → 5 로 변환
     num_batch_val = np.ceil(num_data_val / batch_size)
 
-else:
-    transform = transforms.Compose([Normalization(mean=0.5, std=0.5), ToTensor()])
-
-    load_data = pd.read_csv(os.path.join(data_dir, 'test.csv'))
-    dataset_test = Dataset(load_data, mode, transform=transform)
-    loader_test = DataLoader(dataset_test, batch_size=batch_size, shuffle=False, num_workers=8)
-
-    # 그밖에 부수적인 variables 설정하기
-    num_data_test = len(dataset_test)
-
-    num_batch_test = np.ceil(num_data_test / batch_size)
-
 ## 네트워크 생성하기
 net = Net().to(device)
 
@@ -133,7 +120,10 @@ fn_loss = nn.CrossEntropyLoss().to(device)
 optim = torch.optim.Adam(net.parameters(), lr=lr)
 
 ## 그밖에 부수적인 functions 설정하기
-fn_tonumpy = lambda x: x.to('cpu').detach().numpy().transpose(0, 2, 3, 1)
+# 텐서를 넘파이로 바꾸어 줄 때는 CPU로 옮겨야 한다.
+fn_tonumpy = lambda x: x.to('cpu').detach().numpy()
+fn_lsttonumpy = lambda x: x.detach().cpu().numpy()
+
 fn_denorm = lambda x, mean, std: (x * std) + mean
 fn_class = lambda x: 1.0 * (x > 0.5)
 
@@ -157,6 +147,7 @@ if mode == 'train':
             label = data['label'].to(device)
             input = data['input'].to(device)
 
+            # this output is probability
             output = net(input)
 
             # backward pass
@@ -170,8 +161,24 @@ if mode == 'train':
             # 손실함수 계산
             loss_arr += [loss.item()]
 
-            print("TRAIN: EPOCH %04d / %04d | BATCH %04d / %04d | LOSS %.4f" %
-                  (epoch, num_epoch, batch, num_batch_train, np.mean(loss_arr)))
+            # 정확도 계산
+            # this output is digit (numpy_output, number_output)
+            np_output = fn_tonumpy(output)
+            lst_output = []
+            for i in range(batch_size):
+                nb_output = np.argmax(np_output[i, :])
+                lst_output.append(nb_output)
+
+            # np.sum(a==b)로 카운팅하기 위해서 np로 바꾸어 준다.
+            # 리스트형 lst_output는 바로 numpy로 바꿀 수 없어서 tensor로 바꾼뒤 numpy로 바꿈
+            # 텐서 label은 cpu로 보낸뒤 numpy로 바꿈
+            lst_output = fn_tonumpy(torch.FloatTensor(lst_output))
+            label = fn_tonumpy(data['label'].to('cpu'))
+
+            acc = np.sum(lst_output == label) / len(label)
+
+            print("TRAIN: EPOCH %04d / %04d | BATCH %04d / %04d | LOSS %.4f | ACC %.4f" %
+                  (epoch, num_epoch, batch, num_batch_train, np.mean(loss_arr), acc))
 
         # with torch.no_grad()는 autograd를 멈추게 한다. val을 계산해야 하기 때문
         with torch.no_grad():
@@ -190,8 +197,20 @@ if mode == 'train':
 
                 loss_arr += [loss.item()]
 
-                print("VALID: EPOCH %04d / %04d | BATCH %04d / %04d | LOSS %.4f" %
-                      (epoch, num_epoch, batch, num_batch_val, np.mean(loss_arr)))
+                # 정확도 계산
+                # this output is digit (numpy_output, number_output)
+                np_output = fn_tonumpy(output)
+                lst_output = []
+                for i in range(batch_size):
+                    nb_output = np.argmax(np_output[i, :])
+                    lst_output.append(nb_output)
+
+                # np.sum(a==b)로 카운팅하기 위해서 np로 바꾸어 준다.
+                lst_output = fn_tonumpy(torch.FloatTensor(lst_output))
+                label = fn_tonumpy(data['label'].to('cpu'))
+
+                print("VALID: EPOCH %04d / %04d | BATCH %04d / %04d | LOSS %.4f | ACC %.4f" %
+                      (epoch, num_epoch, batch, num_batch_val, np.mean(loss_arr), acc))
 
         if epoch % 50 == 0:
             save(ckpt_dir=ckpt_dir, net=net, optim=optim, epoch=epoch)
@@ -222,4 +241,7 @@ else:
 
     print("AVERAGE TEST: BATCH %04d / %04d" %
           (batch, num_batch_test))
+
+
+##
 
