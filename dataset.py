@@ -2,6 +2,8 @@
 import numpy as np
 import torch
 
+from torchvision import transforms
+
 ## define dataset
 class Dataset(torch.utils.data.Dataset):
     # dataset preprocessing
@@ -24,6 +26,7 @@ class Dataset(torch.utils.data.Dataset):
         lst_input = []
         for i in range(len(df_input)):
             temp = df_input.iloc[i, :].values.reshape(28, 28)
+            temp = np.where(temp >= 4, temp, 0)
             lst_input.append(temp)
 
         self.lst_label = lst_label
@@ -68,16 +71,50 @@ class Dataset(torch.utils.data.Dataset):
 # nnConv2D 는 nSamples x nChannels x Height x Width 의 4차원 Tensor를 입력을 기본으로 하고
 # 샘플 수에 대한 차원이 없을땐 채널, 세로, 가로만 입력해도 되는듯 하다.
 
-class ToTensor(object):
+class ToPILImage(object):
     def __call__(self, data):
         label, input = data['label'], data['input']
 
-        # (28, 28, 1) → (1, 28, 28)
-        # (가로, 세로, 채널) → (채널, 가로, 세로)
-        # 값을 확인해봐도 자리가 바뀌는 게 아니라 순서가 바뀌어 있다.
-        input = np.moveaxis(input[:, :, :], -1, 0)
+        ToPIL = transforms.ToPILImage()
 
-        data = {'label': torch.from_numpy(label), 'input': torch.from_numpy(input)}
+        data = {'label': label, 'input': ToPIL(input)}
+
+        return data
+
+
+class RandomRotation(object):
+    def __init__(self, degree=5):
+        self.degree = degree
+
+    def __call__(self, data):
+        label, input = data['label'], data['input']
+
+        R_r = transforms.RandomRotation(self.degree)
+
+        data = {'label': label, 'input': R_r(input)}
+
+        return data
+
+
+class RandomAffine(object):
+    def __init__(self, degree=5):
+        self.degree = degree
+
+    def __call__(self, data):
+        label, input = data['label'], data['input']
+
+        R_a = transforms.RandomAffine(self.degree)
+
+        data = {'label': label, 'input': R_a(input)}
+
+        return data
+
+
+class ToNumpy(object):
+    def __call__(self, data):
+        label, input = data['label'], data['input']
+
+        data = {'label': label, 'input': np.array(input)}
 
         return data
 
@@ -95,18 +132,19 @@ class Normalization(object):
         return data
 
 
-class RandomFlip(object):
+class ToTensor(object):
     def __call__(self, data):
         label, input = data['label'], data['input']
 
-        if np.random.rand() > 0.5:
-            label = np.fliplr(label)
-            input = np.fliplr(input)
+        # PIL -> Numpy로 변환하면서 축이 하나 사라졌다.
+        if input.ndim == 2:
+            input = input[:, :, np.newaxis]
 
-        if np.random.rand() > 0.5:
-            label = np.fliqud(label)
-            input = np.fliqud(input)
+        # (28, 28, 1) → (1, 28, 28)
+        # (가로, 세로, 채널) → (채널, 가로, 세로)
+        # 값을 확인해봐도 자리가 바뀌는 게 아니라 순서가 바뀌어 있다.
+        input = np.moveaxis(input[:, :, :], -1, 0)
 
-        data = {'label': label, 'input': input}
+        data = {'label': torch.from_numpy(label), 'input': torch.from_numpy(input)}
 
         return data

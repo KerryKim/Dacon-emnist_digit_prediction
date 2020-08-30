@@ -22,10 +22,20 @@ from model import Net
 from dataset import *
 from util import *
 
-#Random seed
-np.random.seed(7)
-random.seed(7)
-random_state=7
+
+
+## 랜덤시드 고정하기
+# seed 값을 고정해야 hyper parameter 바꿀 때마다 결과를 비교할 수 있습니다.
+def seed_everything(seed):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+
+seed = 0
+seed_everything(seed)
 
 ## Parser 생성하기
 parser = argparse.ArgumentParser(description="Train the Net",
@@ -78,29 +88,21 @@ print("train/test_mode: %s" % mode)
 
 ## 네트워크 학습하기
 if mode == 'train':
-    # 어떤 결과가 나올지 모르므로 RandomFlip()은 일단 뺀다.
-    # transform = transforms.Compose([Normalization(mean=0.5, std=0.5), RandomFlip(), ToTensor()])
-
-    transform = transforms.Compose([Normalization(mean=0.5, std=0.5), ToTensor()])
-
-    '''
-    dataset = Dataset(data_dir=os.path.join(data_dir, 'train.csv'), transform=transform)
-    label, input = dataset['label'], dataset['input'] 
-
-    이렇게 사용이 불가하다. 왜냐하면 Dataset class를 사용하면 데이터형도 dataset이 되기 때문에 dict을 사용할 수 없다.
-    '''
+    transform_train = transforms.Compose([ToPILImage(), RandomRotation(degree=5), RandomAffine(degree=5),
+                                          ToNumpy(), Normalization(mean=0.5, std=0.5), ToTensor()])
+    transform_val = transforms.Compose([Normalization(mean=0.5, std=0.5), ToTensor()])
 
     # train/valid dataset으로 나누어 준다.
     # train_test_split의 output 순서
     # 4분류 : train_input, valid_input, train_label,valid_label
     # 2분류 : train, valid
     load_data = pd.read_csv(os.path.join(data_dir, 'train.csv'))
-    train, val = train_test_split(load_data, test_size=0.125, random_state=random_state)
+    train, val = train_test_split(load_data, test_size=0.125, random_state=seed)
 
-    dataset_train = Dataset(train, mode, transform=transform)
+    dataset_train = Dataset(train, mode, transform=transform_train)
     loader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=8)
 
-    dataset_val = Dataset(val, mode, transform=transform)
+    dataset_val = Dataset(val, mode, transform=transform_val)
     loader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=8)
 
     # 그밖에 부수적인 variables 설정하기
@@ -121,6 +123,7 @@ else:
     num_data_test = len(dataset_test)
 
     num_batch_test = np.ceil(num_data_test / batch_size)
+
 ## 네트워크 생성하기
 net = Net().to(device)
 
@@ -136,13 +139,6 @@ fn_tonumpy = lambda x: x.to('cpu').detach().numpy()
 fn_denorm = lambda x, mean, std: (x * std) + mean
 fn_class = lambda x: 1.0 * (x > 0.5)
 
-
-def flatten(lst):
-    result = []
-    for item in lst:
-        result.extend(item)
-    return result
-
 ## 네트워크 학습시키기
 st_epoch = 0
 
@@ -151,9 +147,16 @@ if mode == 'train':
     if train_continue == "on":
         net, optim, st_epoch = load(ckpt_dir=ckpt_dir, net=net, optim=optim)
 
+    # plot을 그리기 위해 빈 리스트를 추가한다.
+    train_loss, val_loss, train_acc, val_acc = [], [], [], []
+
     for epoch in range(st_epoch + 1, num_epoch + 1):
         net.train()
         loss_arr = []
+
+        # 1 batch의 loss, acc를 모두 더한 값
+        loss_batch_sum = 0
+        acc_batch_sum = 0
 
         # enumerate(~, 1) 에서 1은 start value를 의미한다
         # 열거하다라는 뜻, 1을 안쓰면 0부터 시작하므로 카운트가 어렵다.
@@ -176,6 +179,8 @@ if mode == 'train':
 
             # 손실함수 계산
             loss_arr += [loss.item()]
+            loss = np.mean(loss_arr)
+            loss_batch_sum += loss
 
             # 정확도 계산
             # this output is digit (numpy_output, number_output)
@@ -192,14 +197,22 @@ if mode == 'train':
             label = fn_tonumpy(data['label'].to('cpu'))
 
             acc = np.sum(lst_output == label) / len(label)
+            acc_batch_sum += acc
 
-            print("TRAIN: EPOCH %04d / %04d | BATCH %04d / %04d | LOSS %.4f | ACC %.4f" %
-                  (epoch, num_epoch, batch, num_batch_train, np.mean(loss_arr), acc))
+        #             print("TRAIN: EPOCH %04d / %04d | BATCH %04d / %04d | LOSS %.4f | ACC %.4f" %
+        #                    (epoch, num_epoch, batch, num_batch_train, loss, acc))
+
+        train_loss.append(loss_batch_sum / num_batch_train)
+        train_acc.append(acc_batch_sum / num_batch_train)
 
         # with torch.no_grad()는 autograd를 멈추게 한다. val을 계산해야 하기 때문
         with torch.no_grad():
             net.eval()
             loss_arr = []
+
+            # 1 batch의 loss, acc를 모두 더한 값
+            loss_batch_sum = 0
+            acc_batch_sum = 0
 
             for batch, data in enumerate(loader_val, 1):
                 # forward pass
@@ -212,6 +225,8 @@ if mode == 'train':
                 loss = fn_loss(output, label)
 
                 loss_arr += [loss.item()]
+                loss = np.mean(loss_arr)
+                loss_batch_sum += loss
 
                 # 정확도 계산
                 # this output is digit (numpy_output, number_output)
@@ -225,11 +240,22 @@ if mode == 'train':
                 lst_output = fn_tonumpy(torch.FloatTensor(lst_output))
                 label = fn_tonumpy(data['label'].to('cpu'))
 
-                print("VALID: EPOCH %04d / %04d | BATCH %04d / %04d | LOSS %.4f | ACC %.4f" %
-                      (epoch, num_epoch, batch, num_batch_val, np.mean(loss_arr), acc))
+                acc = np.sum(lst_output == label) / len(label)
+                acc_batch_sum += acc
+
+            #                 print("VALID: EPOCH %04d / %04d | BATCH %04d / %04d | LOSS %.4f | ACC %.4f" %
+            #                        (epoch, num_epoch, batch, num_batch_val, loss, acc))
+
+            val_loss.append(loss_batch_sum / num_batch_val)
+            val_acc.append(acc_batch_sum / num_batch_val)
+
+        # Epoch마다 결과값을 표기한다.
+        print("EPOCH: {}/{} | ".format(epoch, num_epoch), "TRAIN_LOSS: {:4f} | ".format(train_loss[-1]),
+              "TRAIN_ACC: {:4f} | ".format(train_acc[-1]), "VAL_LOSS: {:4f} | ".format(val_loss[-1]),
+              "VAL_ACC: {:4f}".format(val_acc[-1]))
 
         if epoch % 40 == 0:
-            save(ckpt_dir=ckpt_dir, net=net, optim=optim, epoch=epoch)
+            save_model(ckpt_dir=ckpt_dir, net=net, optim=optim, epoch=num_epoch, batch=batch_size)
 
 # TEST MODE
 else:
@@ -260,12 +286,8 @@ else:
                   (batch, num_batch_test))
 
         # submission
-        pred = flatten(pred)
-        submission = pd.read_csv('./datasets/submission.csv')
-        submission['digit'] = fn_tonumpy(torch.LongTensor(pred))
-        submission.to_csv('submission_v1.csv', index=False)
+        if batch % 2560 == 0:
+            save_submission(result_dir=result_dir, prediction=pred, epoch=num_epoch, batch=batch_size)
 
     print("AVERAGE TEST: BATCH %04d / %04d" %
           (batch, num_batch_test))
-
-
